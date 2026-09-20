@@ -11,9 +11,11 @@ import json
 
 from dataset.vevo_dataset import compute_vevo_accuracy, compute_vevo_correspondence, compute_hits_k, compute_hits_k_root_attr, compute_vevo_accuracy_root_attr, compute_vevo_correspondence_root_attr
 
-def train_epoch(cur_epoch, model, dataloader, 
+def train_epoch(cur_epoch, model, dataloader,
                 train_loss_func, train_loss_emotion_func,
-                opt, lr_scheduler=None, print_modulus=1, isVideo=True):
+                opt, lr_scheduler=None, print_modulus=1, isVideo=True,
+                max_grad_norm=1.0,
+                align_loss_func=None, lambda_align=0.0):
     
     loss_chord = -1
     loss_emotion = -1
@@ -58,7 +60,7 @@ def train_epoch(cur_epoch, model, dataloader,
                 tgt_root = tgt_root.flatten()
                 tgt_attr = tgt_attr.flatten()
 
-                tgt_emotion = tgt_emotion.squeeze()
+                tgt_emotion = tgt_emotion.reshape(-1, tgt_emotion.shape[-1])
 
                 loss_chord_root = train_loss_func.forward(y_root, tgt_root)
                 loss_chord_attr = train_loss_func.forward(y_attr, tgt_attr)
@@ -72,28 +74,37 @@ def train_epoch(cur_epoch, model, dataloader,
 
                 total_loss = LOSS_LAMBDA * loss_chord + (1-LOSS_LAMBDA) * loss_emotion
                 total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                 opt.step()
                 if(lr_scheduler is not None):
                     lr_scheduler.step()
-                
+
             else:
                 #videomusic tran nosep
                 y = model(x,
                         x_root,
                         x_attr,
-                        feature_semantic_list, 
-                        feature_key, 
+                        feature_semantic_list,
+                        feature_key,
                         feature_scene_offset,
                         feature_motion,
                         feature_emotion)
-                
+
+                # alignment loss before reshape (tgt is T-1, y is T → slice)
+                if align_loss_func is not None and lambda_align > 0:
+                    T_tgt = tgt.shape[1]
+                    loss_align = align_loss_func(y[:, :T_tgt, :], feature_emotion[:, :T_tgt, :], tgt)
+                else:
+                    loss_align = 0.0
+
                 y   = y.reshape(y.shape[0] * y.shape[1], -1)
                 tgt = tgt.flatten()
-                tgt_emotion = tgt_emotion.squeeze()
+                tgt_emotion = tgt_emotion.reshape(-1, tgt_emotion.shape[-1])
                 loss_chord = train_loss_func.forward(y, tgt)
                 loss_emotion = train_loss_emotion_func.forward(y, tgt_emotion)
-                total_loss = LOSS_LAMBDA * loss_chord + (1-LOSS_LAMBDA) * loss_emotion
+                total_loss = LOSS_LAMBDA * loss_chord + (1-LOSS_LAMBDA) * loss_emotion + lambda_align * loss_align
                 total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                 opt.step()
                 if(lr_scheduler is not None):
                     lr_scheduler.step()
@@ -112,7 +123,7 @@ def train_epoch(cur_epoch, model, dataloader,
                 tgt_root = tgt_root.flatten()
                 tgt_attr = tgt_attr.flatten()
 
-                tgt_emotion = tgt_emotion.squeeze()
+                tgt_emotion = tgt_emotion.reshape(-1, tgt_emotion.shape[-1])
 
                 loss_chord_root = train_loss_func.forward(y_root, tgt_root)
                 loss_chord_attr = train_loss_func.forward(y_attr, tgt_attr)
@@ -122,6 +133,7 @@ def train_epoch(cur_epoch, model, dataloader,
               
                 total_loss = loss_chord
                 total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                 opt.step()
                 if(lr_scheduler is not None):
                     lr_scheduler.step()
@@ -140,9 +152,8 @@ def train_epoch(cur_epoch, model, dataloader,
 
                 total_loss = loss_chord
                 total_loss.backward()
-
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                 opt.step()
-
                 if(lr_scheduler is not None):
                     lr_scheduler.step()
 
@@ -246,7 +257,7 @@ def eval_model(model, dataloader,
                     
                     tgt_root = tgt_root.flatten()
                     tgt_attr = tgt_attr.flatten()
-                    tgt_emotion = tgt_emotion.squeeze()
+                    tgt_emotion = tgt_emotion.reshape(-1, tgt_emotion.shape[-1])
 
                     loss_chord_root = eval_loss_func.forward(y_root, tgt_root)
                     loss_chord_attr = eval_loss_func.forward(y_attr, tgt_attr)
@@ -273,22 +284,26 @@ def eval_model(model, dataloader,
                             feature_emotion)
                     
                     sum_acc += float(compute_vevo_accuracy(y, tgt ))
-                    cor = float(compute_vevo_correspondence(y, tgt, tgt_emotion, tgt_emotion_prob, EMOTION_THRESHOLD))
+                    # reshape (B,T,...) → (B*T,...) for correspondence fn (designed for 1 sample)
+                    _emo_flat  = tgt_emotion.reshape(-1, tgt_emotion.shape[-1])
+                    _prob_flat = tgt_emotion_prob.reshape(-1)
+                    cor = float(compute_vevo_correspondence(y, tgt, _emo_flat, _prob_flat, EMOTION_THRESHOLD))
                     if cor >= 0 :
                         n_test_cor +=1
                         sum_cor += cor
 
-                    sum_h1 += float(compute_hits_k(y, tgt,1))
-                    sum_h3 += float(compute_hits_k(y, tgt,3))
-                    sum_h5 += float(compute_hits_k(y, tgt,5))
-                    
+                    _y_flat = y.reshape(-1, y.shape[-1])
+                    sum_h1 += float(compute_hits_k(_y_flat, tgt,1))
+                    sum_h3 += float(compute_hits_k(_y_flat, tgt,3))
+                    sum_h5 += float(compute_hits_k(_y_flat, tgt,5))
+
                     y   = y.reshape(y.shape[0] * y.shape[1], -1)
 
                     tgt = tgt.flatten()
                     tgt_root = tgt_root.flatten()
                     tgt_attr = tgt_attr.flatten()
-                    
-                    tgt_emotion = tgt_emotion.squeeze()
+
+                    tgt_emotion = tgt_emotion.reshape(-1, tgt_emotion.shape[-1])
 
                     loss_chord = eval_loss_func.forward(y, tgt)
                     loss_emotion = eval_loss_emotion_func.forward(y, tgt_emotion)
@@ -355,7 +370,7 @@ def eval_model(model, dataloader,
                     
                     tgt_root = tgt_root.flatten()
                     tgt_attr = tgt_attr.flatten()
-                    tgt_emotion = tgt_emotion.squeeze()
+                    tgt_emotion = tgt_emotion.reshape(-1, tgt_emotion.shape[-1])
 
                     loss_chord_root = eval_loss_func.forward(y_root, tgt_root)
                     loss_chord_attr = eval_loss_func.forward(y_attr, tgt_attr)
@@ -379,17 +394,20 @@ def eval_model(model, dataloader,
                             feature_key)
                     
                     sum_acc += float(compute_vevo_accuracy(y, tgt ))
-                    cor = float(compute_vevo_correspondence(y, tgt, tgt_emotion, tgt_emotion_prob, EMOTION_THRESHOLD))
-                    
+                    _emo_flat  = tgt_emotion.reshape(-1, tgt_emotion.shape[-1])
+                    _prob_flat = tgt_emotion_prob.reshape(-1)
+                    cor = float(compute_vevo_correspondence(y, tgt, _emo_flat, _prob_flat, EMOTION_THRESHOLD))
+
                     if cor >= 0 :
                         n_test_cor +=1
                         sum_cor += cor
 
-                    sum_h1 += float(compute_hits_k(y, tgt,1))
-                    sum_h3 += float(compute_hits_k(y, tgt,3))
-                    sum_h5 += float(compute_hits_k(y, tgt,5))
+                    _y_flat = y.reshape(-1, y.shape[-1])
+                    sum_h1 += float(compute_hits_k(_y_flat, tgt,1))
+                    sum_h3 += float(compute_hits_k(_y_flat, tgt,3))
+                    sum_h5 += float(compute_hits_k(_y_flat, tgt,5))
 
-                    tgt_emotion = tgt_emotion.squeeze()
+                    tgt_emotion = tgt_emotion.reshape(-1, tgt_emotion.shape[-1])
                     
                     y   = y.reshape(y.shape[0] * y.shape[1], -1)
                     tgt = tgt.flatten()

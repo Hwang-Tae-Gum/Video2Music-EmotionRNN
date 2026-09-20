@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+import json
+import os
 from torch.utils.data import DataLoader
 from dataset.vevo_dataset import create_vevo_datasets
 
@@ -23,11 +25,7 @@ VIS_MODELS_ARR = [
     "2d/clip_l14p"
 ]
 
-regModel = "gru"
-# lstm
-# bilstm
-# gru
-# bigru
+regModel = "bigru"
 
 
 log_format = '%(message)s'
@@ -88,11 +86,20 @@ def main( vm = "", isPrintArgs = True):
     
     loss = nn.MSELoss()
 
+    norm_stats_file = os.path.join("./saved_models", version, "norm_stats.json")
+    norm_stats = None
+    if os.path.isfile(norm_stats_file):
+        with open(norm_stats_file) as f:
+            norm_stats = json.load(f)
+        logging.info(f"norm_stats 로드: {norm_stats}")
+    else:
+        logging.info("norm_stats 없음 — 정규화 미적용")
+
     logging.info( f"VIS MODEL: {args.vis_models}" )
     logging.info("Evaluating (Note Density):")
     model.eval()
-    
-    eval_loss, eval_rmse, eval_rmse_note_density, eval_rmse_loudness = eval_model(model, test_loader, loss)
+
+    eval_loss, eval_rmse, eval_rmse_note_density, eval_rmse_loudness = eval_model(model, test_loader, loss, norm_stats=norm_stats)
 
     logging.info(f"Avg loss: {eval_loss}")
     logging.info(f"Avg RMSE: {eval_rmse}")

@@ -1,0 +1,36 @@
+# checkpoints / model weights (multi-GB, not committed — see README "Checkpoints")
+saved_models/
+saved_models_backup_*/
+
+# dataset (download separately — see README "Dataset")
+dataset/
+
+# generated / cache artifacts
+feature/
+feature_tmp/
+output/
+output_vevo/
+logs/
+log/
+experiments/
+
+# large presentation assets (curated demo clips live in assets/demo/ instead)
+presentation/
+demo_ref/
+
+# soundfont (142MB, exceeds GitHub's file size limit — supply your own)
+soundfonts/*.sf2
+
+# python
+__pycache__/
+*.pyc
+
+# editor / OS junk
+.DS_Store
+._*
+
+# stray local backups
+*.bak
+*.bak2
+*.bak_pre_*
+*_BACKUP_*

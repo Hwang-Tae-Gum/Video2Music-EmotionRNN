@@ -1,5 +1,6 @@
 import os
 import csv
+import json
 import shutil
 import torch
 import torch.nn as nn
@@ -24,12 +25,12 @@ version = VERSION
 split_ver = SPLIT_VER
 split_path = "split_" + split_ver
 
-num_epochs = 20
+num_epochs = 200
 VIS_MODELS_ARR = [
     "2d/clip_l14p"
 ]
 
-regModel = "gru"
+regModel = "bigru"
 # lstm
 # bilstm
 # gru
@@ -59,6 +60,8 @@ def main( vm = "" , isPrintArgs = True ):
         use_cuda(False)
         print("WARNING: Forced CPU usage, expect model to perform slower")
         print("")
+    else:
+        use_cuda(True)
 
     os.makedirs( args.output_dir, exist_ok=True)
     os.makedirs( os.path.join( args.output_dir, version) ,  exist_ok=True)
@@ -110,6 +113,24 @@ def main( vm = "" , isPrintArgs = True ):
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.n_workers, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, num_workers=args.n_workers)
 
+    # 학습셋에서 정규화 통계 계산
+    print("정규화 통계 계산 중...")
+    import numpy as np
+    nd_all, lv_all = [], []
+    for item in train_dataset:
+        nd_all.extend(item["note_density"].tolist())
+        lv_all.extend(item["loudness"].tolist())
+    nd_mean, nd_std = float(np.mean(nd_all)), float(np.std(nd_all))
+    lv_mean, lv_std = float(np.mean(lv_all)), float(np.std(lv_all))
+    nd_std = max(nd_std, 1e-6)
+    lv_std = max(lv_std, 1e-6)
+    norm_stats = {"nd_mean": nd_mean, "nd_std": nd_std, "lv_mean": lv_mean, "lv_std": lv_std}
+    norm_stats_file = os.path.join(results_folder, "norm_stats.json")
+    with open(norm_stats_file, "w") as f:
+        json.dump(norm_stats, f, indent=2)
+    print(f"Note Density — mean: {nd_mean:.3f}, std: {nd_std:.3f}")
+    print(f"Loudness     — mean: {lv_mean:.4f}, std: {lv_std:.4f}")
+
     model = VideoRegression(max_sequence_video=args.max_sequence_video, total_vf_dim=total_vf_dim, regModel= regModel).to(get_device())
     
     start_epoch = BASELINE_EPOCH
@@ -128,7 +149,9 @@ def main( vm = "" , isPrintArgs = True ):
     train_loss_func = nn.MSELoss()
 
     opt = Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
-    lr_scheduler = None
+    lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        opt, mode='min', factor=0.5, patience=10, min_lr=1e-6
+    )
 
     ##### Tracking best evaluation accuracy #####
     best_eval_rmse        = float("inf")
@@ -150,7 +173,7 @@ def main( vm = "" , isPrintArgs = True ):
             print(SEPERATOR)
             print("")
             # Train
-            train_epoch(epoch+1, model, train_loader, train_loss_func, opt, lr_scheduler, args.print_modulus)
+            train_epoch(epoch+1, model, train_loader, train_loss_func, opt, None, args.print_modulus, norm_stats=norm_stats)
             print(SEPERATOR)
             print("Evaluating:")
         else:
@@ -158,8 +181,8 @@ def main( vm = "" , isPrintArgs = True ):
             print("Baseline model evaluation (Epoch 0):")
             
         # Eval
-        train_loss, train_rmse, train_rmse_note_density, train_rmse_loudness  = eval_model(model, train_loader, train_loss_func)
-        eval_loss, eval_rmse, eval_rmse_note_density, eval_rmse_loudness = eval_model(model, val_loader, eval_loss_func)
+        train_loss, train_rmse, train_rmse_note_density, train_rmse_loudness  = eval_model(model, train_loader, train_loss_func, norm_stats=norm_stats)
+        eval_loss, eval_rmse, eval_rmse_note_density, eval_rmse_loudness = eval_model(model, val_loader, eval_loss_func, norm_stats=norm_stats)
 
         # Learn rate
         lr = get_lr(opt)
@@ -176,6 +199,8 @@ def main( vm = "" , isPrintArgs = True ):
         
         print(SEPERATOR)
         print("")
+
+        lr_scheduler.step(eval_rmse)
 
         new_best = False
         if(eval_rmse < best_eval_rmse):

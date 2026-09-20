@@ -24,6 +24,7 @@ def parse_train_args():
     parser.add_argument("-continue_epoch", type=int, default=None, help="Epoch the continue_weights model was at")
     parser.add_argument("-lr", type=float, default=None, help="Constant learn rate. Leave as None for a custom scheduler.")
     parser.add_argument("-ce_smoothing", type=float, default=None, help="Smoothing parameter for smoothed cross entropy loss (defaults to no smoothing)")
+    parser.add_argument("--soft_corr", action="store_true", default=False, help="Use harmonic similarity soft-target loss instead of cross-entropy")
     parser.add_argument("-batch_size", type=int, default=1, help="Batch size to use")
     parser.add_argument("-epochs", type=int, default=5, help="Number of epochs to use")
 
@@ -92,7 +93,7 @@ def print_train_args(args):
 
 def parse_eval_args():
     if IS_VIDEO:
-        modelpath = "./saved_models/AMT/best_loss_weights.pickle"
+        modelpath = "./saved_models/AMT_full/best_loss_weights.pickle"
         # modelpath = "./saved_models/"+version+ "/"+VIS_MODELS_PATH+"/results/best_loss_weights.pickle"
     else:
         modelpath = "./saved_models/"+version+ "/no_video/results/best_loss_weights.pickle"
@@ -160,7 +161,7 @@ def parse_generate_args():
     parser = argparse.ArgumentParser()
     outputpath = "./output_vevo/"+version
     if IS_VIDEO:
-        modelpath = "./saved_models/AMT/best_loss_weights.pickle"
+        modelpath = "./saved_models/AMT_full/best_loss_weights.pickle"
         modelpathReg = "./saved_models/AMT/best_rmse_weights.pickle"
         # modelpath = "./saved_models/"+version+ "/"+VIS_MODELS_PATH+"/results/best_acc_weights.pickle"
         # modelpathReg = "./saved_models/"+version+ "/"+VIS_MODELS_PATH+"/results_regression_bigru/best_rmse_weights.pickle"

@@ -57,6 +57,8 @@ def main( vm = "" , isPrintArgs = True ):
         use_cuda(False)
         print("WARNING: Forced CPU usage, expect model to perform slower")
         print("")
+    else:
+        use_cuda(True)
 
     os.makedirs( args.output_dir, exist_ok=True)
     os.makedirs( os.path.join( args.output_dir, version),  exist_ok=True)
@@ -100,12 +102,7 @@ def main( vm = "" , isPrintArgs = True ):
             total_vf_dim += vf.shape[1]
         total_vf_dim += 1 # Scene_offset
         total_vf_dim += 1 # Motion
-        
-        # Emotion
-        if args.emo_model.startswith("6c"):
-            total_vf_dim += 6
-        else:
-            total_vf_dim += 5
+        # Emotion는 Linear_emo 전용 경로로 별도 처리 (total_vf_dim에 포함 안 함)
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.n_workers, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, num_workers=args.n_workers)

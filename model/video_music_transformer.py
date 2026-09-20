@@ -32,6 +32,7 @@ class VideoMusicTransformer(nn.Module):
         
         self.total_vf_dim = total_vf_dim
         self.Linear_vis     = nn.Linear(self.total_vf_dim, self.d_model)
+        self.Linear_emo     = nn.Linear(6, self.d_model)   # dedicated emotion pathway
         self.Linear_chord     = nn.Linear(self.d_model+1, self.d_model)
         
         # Positional encoding
@@ -74,8 +75,7 @@ class VideoMusicTransformer(nn.Module):
         x_attr = self.embedding_attr(x_attr)
         x = x_root + x_attr
 
-        feature_key_padded = torch.full((x.shape[0], x.shape[1], 1), feature_key.item())
-        feature_key_padded = feature_key_padded.to(get_device())
+        feature_key_padded = feature_key.float().view(x.shape[0], 1, 1).expand(x.shape[0], x.shape[1], 1).to(get_device())
         x = torch.cat([x, feature_key_padded], dim=-1)
 
         xf = self.Linear_chord(x)
@@ -86,10 +86,9 @@ class VideoMusicTransformer(nn.Module):
         for i in range(1, len(feature_semantic_list)):
             vf_concat = torch.cat( (vf_concat, feature_semantic_list[i].float()), dim=2)            
         
-        vf_concat = torch.cat([vf_concat, feature_scene_offset.unsqueeze(-1).float()], dim=-1) # -> (max_seq_video, batch_size, d_model+1)
-        vf_concat = torch.cat([vf_concat, feature_motion.unsqueeze(-1).float()], dim=-1) # -> (max_seq_video, batch_size, d_model+1)
-        vf_concat = torch.cat([vf_concat, feature_emotion.float()], dim=-1) # -> (max_seq_video, batch_size, d_model+1)
-        vf = self.Linear_vis(vf_concat)
+        vf_concat = torch.cat([vf_concat, feature_scene_offset.unsqueeze(-1).float()], dim=-1)
+        vf_concat = torch.cat([vf_concat, feature_motion.unsqueeze(-1).float()], dim=-1)
+        vf = self.Linear_vis(vf_concat) + self.Linear_emo(feature_emotion.float())
         
         ### POSITIONAL ENCODING ###
         xf = xf.permute(1,0,2) # -> (max_seq-1, batch_size, d_model)

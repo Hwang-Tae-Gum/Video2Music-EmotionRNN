@@ -1,143 +1,109 @@
-<div align="center">
+# Video2Music + TEA (Temporal Emotion Adapter)
 
-# Video2Music: Suitable Music Generation from Videos using an Affective Multimodal Transformer model
+This repository extends [AMAAI-Lab/Video2Music](https://github.com/AMAAI-Lab/Video2Music) (AMT) with **TEA**, a temporal emotion-conditioning module for video-to-chord generation.
 
+The original AMT model injects a video's emotion signal (a 6-dim vector per frame) into the Transformer by simple concatenation. TEA instead processes the emotion sequence **temporally** — through a windowed, causally-decayed RNN (or self-attention) adapter — before injecting it into the encoder and/or decoder, giving the model a richer sense of how emotion evolves over the clip instead of a per-frame snapshot.
 
+Full experiment log (12+ architecture/loss variants, ablations, failure analysis) is in [`TEA_report.md`](TEA_report.md).
 
-[Demo](https://huggingface.co/spaces/amaai-lab/video2music) | [Website and Examples](https://amaai-lab.github.io/Video2Music/) | [Paper](https://doi.org/10.1016/j.eswa.2024.123640) | [Dataset (MuVi-Sync)](https://zenodo.org/records/10057093)
+## Demo
 
-[![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/amaai-lab/video2music)  [![arXiv](https://img.shields.io/badge/arXiv-2311.00968-brightgreen.svg?style=flat-square)](https://arxiv.org/abs/2311.00968)
+Same 20s clip (Taylor Swift – *Wildest Dreams*, auto-selected highlight segment), baseline vs. TEA-generated chords/music:
 
-</div>
+| Baseline (AMT) | TEA (MS-TEA + AlignLoss, attention) |
+|---|---|
+| <video src="assets/demo/baseline_vs_tea_baseline.mp4" controls width="320"></video> | <video src="assets/demo/baseline_vs_tea_TEA.mp4" controls width="320"></video> |
 
-This repository contains the code and dataset accompanying the paper "Video2Music: Suitable Music Generation from Videos using an Affective Multimodal Transformer model" by Dr. Jaeyong Kang, Prof. Soujanya Poria, and Prof. Dorien Herremans.
+(If the players don't render, download directly: [baseline](assets/demo/baseline_vs_tea_baseline.mp4) / [TEA](assets/demo/baseline_vs_tea_TEA.mp4))
 
-🔥 Live demo available on [HuggingFace](https://huggingface.co/spaces/amaai-lab/video2music) and [Replicate](https://replicate.com/amaai-lab/video2music).
+## Architecture
 
-<div align="center">
-  <img src="v2m.png" width="400"/>
-</div>
+```
+input: feature_emotion (batch, seq_len, 6)
+ │
+ ├─ [1] learnable signal_weight (6-dim) + temperature scaling
+ │       → softmax-weighted importance per emotion dimension
+ ├─ [2] input dropout (p=0.2)
+ ├─ [3] temporal window (size=2, exponential decay, fully vectorized via unfold)
+ ├─ [4] Bidirectional RNN (LSTM/GRU) or self-attention
+ │       → hidden = d_model // 2 (bidirectional → output dim = d_model)
+ ├─ [5] residual + LayerNorm
+ └─ [6] output projection (Linear d_model → d_model)
 
-## Introduction
-We propose a novel AI-powered multimodal music generation framework called Video2Music. This framework uniquely uses video features as conditioning input to generate matching music using a Transformer architecture. By employing cutting-edge technology, our system aims to provide video creators with a seamless and efficient solution for generating tailor-made background music.
-
-![](framework.png)
-
-
-## Change Log
-- 2023-11-28: add new input method (YouTube URL) on HuggingFace
-
-## Quickstart Guide
-
-Generate music from video:
-
-```python
-import IPython
-from video2music import Video2music
-
-input_video = "input.mp4"
-
-input_primer = "C Am F G"
-input_key = "C major"
-
-video2music = Video2music()
-output_filename = video2music.generate(input_video, input_primer, input_key)
-
-IPython.display.Video(output_filename)
+output: emotion_embedding (batch, seq_len, 512)
 ```
 
-## Installation
+TEA can be injected at the **encoder** (additive, into video features), the **decoder** (cross-attention), or **both**. MS-TEA extends the same adapter to scene-offset and motion signals (multi-signal), and **AlignLoss** adds a direct MSE penalty on emotion-valence alignment during fine-tuning.
 
-This repo is developed using python version 3.8
+## Results
+
+Evaluated on the VEVO validation split (`dataset/vevo_meta/split/v1`). H@k = chord hit-rate@k, AR = Affective Correspondence (agreement between generated chord quality and ground-truth video emotion).
+
+| Model | H@1 | H@3 | H@5 | AR |
+|---|---|---|---|---|
+| AMT (no emotion) | 0.499 | 0.781 | 0.879 | – |
+| AMT (paper baseline, reproduced) | 0.509 | 0.786 | 0.882 | 0.466 |
+| **TEA (encoder, GRU)** | **0.609** | 0.853 | 0.918 | 0.470 |
+| MS-TEA + AlignLoss (λ=0.15, GRU) | 0.566 | 0.831 | 0.907 | 0.457 |
+| **MS-TEA + AlignLoss (attention)** | 0.567 | 0.833 | 0.906 | **0.441–0.469*** |
+
+\* AR fluctuates slightly (0.441–0.469 across eval runs / dataset ordering); see `TEA_report.md` §18 for the full 12-model sweep (up to AR=0.4694).
+
+There's a real trade-off here: raw TEA (single-signal, encoder-GRU) gets the best chord-prediction accuracy (H@1), while the AlignLoss-tuned MS-TEA variants trade a bit of H@1 for better emotion agreement (AR). Both are kept as checkpoints for that reason — see [Checkpoints](#checkpoints).
+
+Reproduce with:
+```bash
+conda run -n video2music python _eval_amts.py                 # AMT_no_emotion / AMT_full / MSTEA_encoder_attention_align
+conda run -n video2music python eval_TEA.py --exp <n>          # any experiment in EXP_CONFIGS
+```
+
+## Setup
 
 ```bash
-apt-get update
-apt-get install ffmpeg
-apt-get install fluidsynth
-git clone https://github.com/AMAAI-Lab/Video2Music
-cd Video2Music
+conda create -n video2music python=3.8
+conda activate video2music
 pip install -r requirements.txt
 ```
 
-* Download the processed training data `AMT.zip` from [HERE](https://drive.google.com/file/d/1qpcBXF04pgdy9hqRexr0mTx7L9_CAFpt/view?usp=drive_link) and extract the zip file and put the extracted two files directly under this folder (`saved_models/AMT/`)
+Requires `ffmpeg` and `fluidsynth` on PATH, and a GM soundfont at `soundfonts/default_sound_font.sf2`.
 
-* Download the soundfont file `default_sound_font.sf2` from [HERE](https://drive.google.com/file/d/1B9qjgimW9h6Gg5k8PZNt_ArWwSMJ4WuJ/view?usp=drive_link) and put the file directly under this folder (`soundfonts/`)
+## Checkpoints
 
-* Our code is built on pytorch version 1.12.1 (torch==1.12.1 in the requirements.txt). But you might need to choose the correct version of `torch` based on your CUDA version
+Model weights are **not** included in this repo (multi-GB each). The following are kept locally and referenced by the scripts below — request access or retrain with `train_TEA.py` / `train_full.py` / `train_no_emotion.py`:
 
-## Dataset
+| Checkpoint | Role |
+|---|---|
+| `saved_models/AMT` | regression weights (note density/velocity) used by every generation script |
+| `saved_models/AMT_full` | baseline chord model (current architecture, retrained) |
+| `saved_models/AMT_no_emotion` | ablation: no emotion signal at all |
+| `saved_models/TEA_encoder_gru` | best H@1 (single-signal TEA, encoder-only) |
+| `saved_models/MSTEA_encoder_gru_align_l015` | best H@1/AR balance (multi-signal + AlignLoss λ=0.15) |
+| `saved_models/MSTEA_encoder_attention_align` | best AR (attention-based multi-signal + AlignLoss) |
 
-* Obtain the dataset:
-  * MuVi-Sync [(Link)](https://zenodo.org/records/10057093)
- 
-* Put all directories started with `vevo` in the dataset under this folder (`dataset/`) 
+## Usage
 
-## Directory Structure
-
-* `saved_models/`: saved model files
-* `utilities/`
-  * `run_model_vevo.py`: code for running model (AMT)
-  * `run_model_regression.py`: code for running model (bi-GRU)
-* `model/`
-  * `video_music_transformer.py`: Affective Multimodal Transformer (AMT) model 
-  * `video_regression.py`: Bi-GRU regression model used for predicting note density/loudness
-  * `positional_encoding.py`: code for Positional encoding
-  * `rpr.py`: code for RPR (Relative Positional Representation)
-* `dataset/`
-  * `vevo_dataset.py`: Dataset loader
-* `script/` : code for extracting video/music features (sementic, motion, emotion, scene offset, loudness, and note density)
-* `train.py`: training script (AMT)
-* `train_regression.py`: training script (bi-GRU)
-* `evaluate.py`: evaluation script
-* `generate.py`: inference script
-* `video2music.py`: Video2Music module that outputs video with generated background music from input video
-* `demo.ipynb`: Jupyter notebook for Quickstart Guide
-
-## Training
-
-  ```shell
-  python train.py
-  ```
-
-## Inference
-
-  ```shell
-  python generate.py
-  ```
-
-
-## Subjective Evaluation by Listeners
-
-| **Model** | **Overall Music Quality** ↑ | **Music-Video Correspondence** ↑ | **Harmonic Matching** ↑ | **Rhythmic Matching** ↑ | **Loudness Matching** ↑ |
-|--------------------|:-----------:|:----------:|:----------:|:----------:|:----------:|
-| Music Transformer  | 3.4905      | 2.7476     | 2.6333     | 2.8476     | 3.1286     |
-| Video2Music        | 4.2095      | 3.6667     | 3.4143     | 3.8714     | 3.8143     |
-
-
-## TODO
-
-- [ ] Add other instruments (e.g., drum) for live demo
-
-## Citation
-If you find this resource useful, [please cite the original work](https://doi.org/10.1016/j.eswa.2024.123640):
-
-```bibtex
-@article{KANG2024123640,
-  title = {Video2Music: Suitable music generation from videos using an Affective Multimodal Transformer model},
-  author = {Jaeyong Kang and Soujanya Poria and Dorien Herremans},
-  journal = {Expert Systems with Applications},
-  pages = {123640},
-  year = {2024},
-  issn = {0957-4174},
-  doi = {https://doi.org/10.1016/j.eswa.2024.123640},
-}
+Generate chords + render video for a VEVO test clip:
+```bash
+conda run -n video2music python generate_TEA.py --exp 16 --test_id 223
+# --exp 9  = TEA_encoder_gru (best H@1)
+# --exp 14 = MSTEA_encoder_gru_align_l015
+# --exp 16 = MSTEA_encoder_attention_align (best AR)
 ```
 
-Kang, J., Poria, S. & Herremans, D. (2024). Video2Music: Suitable Music Generation from Videos using an Affective Multimodal Transformer model, Expert Systems with Applications (in press).
+Override the emotion conditioning directly:
+```bash
+conda run -n video2music python generate_TEA.py --exp 16 --test_id 223 --emotion exciting
+```
 
+Benchmark inference cost (baseline vs. TEA):
+```bash
+conda run -n video2music python benchmark_inference.py --test_id 223
+```
 
-## Acknowledgements
+## Dataset (MuVi-Sync)
 
-Our code is based on [Music Transformer](https://github.com/gwinndr/MusicTransformer-Pytorch).
+`dataset/` follows the [MuVi-Sync](https://github.com/AMAAI-Lab/Video2Music) layout:
 
-
+- **Music features**: `vevo_chord`, `vevo_note_density`, `vevo_loudness`
+- **Video features**: `vevo_scene_offset`, `vevo_emotion` (5-class or 6-class), `vevo_semantic`, `vevo_motion`
+- **Metadata**: `vevo_meta/idlist.txt` (feature/title/YouTube ID list), `vevo_meta/split/` (train/val/test splits)

@@ -46,7 +46,7 @@ def main( vm = "", isPrintArgs = True):
         for v in vis_arr:
             vis_abbr_path = vis_abbr_path + "_" + VIS_ABBR_DIC[v]
         vis_abbr_path = vis_abbr_path[1:]
-        args.model_weights = "./saved_models/" + version + "/best_loss_weights.pickle"
+        args.model_weights = "./saved_models/AMT_full/best_loss_weights.pickle"
     else:
         vis_abbr_path = "no_video"
         args.model_weights = "./saved_models/" + version + "/best_loss_weights.pickle"
@@ -74,13 +74,8 @@ def main( vm = "", isPrintArgs = True):
             total_vf_dim += vf.shape[1]
         total_vf_dim += 1 # Scene_offset
         total_vf_dim += 1 # Motion
-        
-        # Emotion
-        if args.emo_model.startswith("6c"):
-            total_vf_dim += 6
-        else:
-            total_vf_dim += 5
-        
+        # Emotion는 Linear_emo 전용 경로로 별도 처리 (total_vf_dim에 포함 안 함)
+
     if args.is_video:
         model = VideoMusicTransformer(n_layers=args.n_layers, num_heads=args.num_heads,
                     d_model=args.d_model, dim_feedforward=args.dim_feedforward,

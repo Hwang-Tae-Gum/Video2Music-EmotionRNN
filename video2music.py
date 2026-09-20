@@ -359,7 +359,10 @@ class Video2music:
         # path = snapshot_download(repo_id=name, cache_dir=cache_dir)
 
         self.device = device
-        
+
+        from utilities.device import use_cuda
+        use_cuda(True)
+
         # self.model.device = device
         # self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         # f"{path}/beats/microsoft-deberta-v3-large.pt"
@@ -367,9 +370,11 @@ class Video2music:
         # self.model_weights = f"{path}/saved_models/AMT/best_loss_weights.pickle"
         # self.modelReg_weights = f"{path}/saved_models/AMT/best_rmse_weights.pickle"
 
-        self.model_weights = "saved_models/AMT/best_loss_weights.pickle"
+        self.model_weights = "saved_models/AMT_full/best_loss_weights.pickle"
         self.modelReg_weights = "saved_models/AMT/best_rmse_weights.pickle"
 
+        # NOTE: 구버전 아키텍처 가정(emotion을 Linear_vis에 concat). 현재 model/video_music_transformer.py는
+        # emotion을 Linear_emo로 분리해 770을 기대하므로, 이 클래스는 검증되지 않았고 깨질 수 있음.
         self.total_vf_dim = 776
         # 768 (sem) + 1 (mo) + 1 (scene) + 6 (emo)
         self.max_seq_video = 300
@@ -380,9 +385,9 @@ class Video2music:
                     max_sequence_midi=2048, max_sequence_video=300, 
                     max_sequence_chord=300, total_vf_dim=self.total_vf_dim, rpr=RPR).to(device)
         
-        self.model.load_state_dict(torch.load(self.model_weights, map_location=device))
+        self.model.load_state_dict(torch.load(self.model_weights, map_location=device, weights_only=False))
         self.modelReg = VideoRegression(max_sequence_video=300, total_vf_dim=self.total_vf_dim, regModel= "bigru").to(device)
-        self.modelReg.load_state_dict(torch.load(self.modelReg_weights, map_location=device))
+        self.modelReg.load_state_dict(torch.load(self.modelReg_weights, map_location=device, weights_only=False))
 
         self.model.eval()
         self.modelReg.eval()
@@ -390,6 +395,12 @@ class Video2music:
         self.SF2_FILE = "soundfonts/default_sound_font.sf2"
 
     def generate(self, video, primer, key):
+
+        if isinstance(video, str) and (video.startswith("http://") or video.startswith("https://")):
+            import subprocess
+            dl_path = "/tmp/yt_input.mp4"
+            subprocess.run(["yt-dlp", "-f", "b[ext=mp4]", "-o", dl_path, video], check=True)
+            video = dl_path
 
         feature_dir = Path("./feature")
         output_dir = Path("./output")
@@ -580,7 +591,7 @@ class Video2music:
                 velolistExp.append(velocity_exp)
             
             densitylist = []
-            for item in y_loudness_np_lv:
+            for item in y_note_density_np:
                 density = item[0]
                 if density <= 6:
                     densitylist.append(0)
@@ -615,6 +626,16 @@ class Video2music:
                 else:
                     midi_chords_orginal.append(Chord(k).getMIDI("c", 4))
             midi_chords = voice(midi_chords_orginal)
+
+            def _safe_dedupe(chord):
+                seen, out = set(), []
+                for p in chord:
+                    if p not in seen:
+                        seen.add(p)
+                        out.append(p)
+                return out if len(out) >= 4 else chord
+            midi_chords = [_safe_dedupe(c) if c else c for c in midi_chords]
+
             trans = traspose_key_dic[key]
 
             for i, chord in enumerate(midi_chords):
@@ -696,7 +717,7 @@ class Video2music:
             audio_mp = mp.AudioFileClip(str(f_path_flac))
             video_mp = mp.VideoFileClip(str(video))
 
-            audio_mp = audio_mp.subclip(0, video_mp.duration )
+            audio_mp = audio_mp.subclip(0, min(audio_mp.duration, video_mp.duration))
             final = video_mp.set_audio(audio_mp)
 
             final.write_videofile(str(f_path_video_out), 
