@@ -37,24 +37,23 @@ TEA can be injected at the **encoder** (additive, into video features), the **de
 
 ## Results
 
-Evaluated on the VEVO validation split (`dataset/vevo_meta/split/v1`). H@k = chord hit-rate@k, AR = Affective Correspondence (agreement between generated chord quality and ground-truth video emotion).
+Evaluated on the VEVO validation split (`dataset/vevo_meta/split/v1`). H@k = chord hit-rate@k (higher is better). AR = Agreement Rate: the fraction of timesteps where the generated chord's valence (major/minor-family sign) matches the direction of the dominant video emotion (exciting/relaxing = positive, fearful/tense/sad = negative; neutral video and valence-neutral chords are skipped) — see `eval_emotion_valence.py`.
 
 | Model | H@1 | H@3 | H@5 | AR |
 |---|---|---|---|---|
-| AMT (no emotion) | 0.499 | 0.781 | 0.879 | – |
-| AMT (paper baseline, reproduced) | 0.509 | 0.786 | 0.882 | 0.466 |
-| **TEA (encoder, GRU)** | **0.609** | 0.853 | 0.918 | 0.470 |
-| MS-TEA + AlignLoss (λ=0.15, GRU) | 0.566 | 0.831 | 0.907 | 0.457 |
-| **MS-TEA + AlignLoss (attention)** | 0.567 | 0.833 | 0.906 | **0.441–0.469*** |
+| AMT (no emotion) | 0.499 | 0.781 | 0.879 | 0.419 |
+| AMT (paper baseline, reproduced) | 0.509 | 0.786 | 0.882 | 0.423 |
+| **TEA (encoder, GRU)** | **0.609** | 0.853 | 0.918 | 0.425 |
+| MS-TEA + AlignLoss (λ=0.15, GRU) | 0.566 | 0.831 | 0.907 | 0.468 |
+| **MS-TEA + AlignLoss (attention)** | 0.567 | 0.833 | 0.906 | **0.469** |
 
-\* AR fluctuates slightly (0.441–0.469 across eval runs / dataset ordering); see `TEA_report.md` §18 for the full 12-model sweep (up to AR=0.4694).
-
-There's a real trade-off here: raw TEA (single-signal, encoder-GRU) gets the best chord-prediction accuracy (H@1), while the AlignLoss-tuned MS-TEA variants trade a bit of H@1 for better emotion agreement (AR). Both are kept as checkpoints for that reason — see [Checkpoints](#checkpoints).
+The trade-off is sharper than it might look at first: single-signal TEA (encoder-GRU) wins H@1 by a wide margin but barely moves AR over the baseline (+0.002). AlignLoss — an explicit valence-direction loss added during fine-tuning on the multi-signal (MS-TEA) model — is what actually drives AR up (+0.046 over baseline), at a moderate H@1 cost relative to plain TEA. Both extremes are kept as checkpoints for that reason — see [Checkpoints](#checkpoints). Full 12-model ablation (loss weight sweep, curriculum/softmargin/scratch variants, failure analysis) is in `TEA_report.md` §17–18.
 
 Reproduce with:
 ```bash
-conda run -n video2music python _eval_amts.py                 # AMT_no_emotion / AMT_full / MSTEA_encoder_attention_align
-conda run -n video2music python eval_TEA.py --exp <n>          # any experiment in EXP_CONFIGS
+conda run -n video2music python _eval_amts.py                 # H@k: AMT_no_emotion / AMT_full / MSTEA_encoder_attention_align
+conda run -n video2music python eval_TEA.py --exp <n>          # H@k for any experiment in EXP_CONFIGS
+conda run -n video2music python eval_emotion_valence.py        # AR (Agreement Rate) for all models above
 ```
 
 ## Setup
@@ -69,7 +68,7 @@ Requires `ffmpeg` and `fluidsynth` on PATH, and a GM soundfont at `soundfonts/de
 
 ## Checkpoints
 
-Model weights are **not** included in this repo (multi-GB each). The following are kept locally and referenced by the scripts below — request access or retrain with `train_TEA.py` / `train_full.py` / `train_no_emotion.py`:
+Model weights are **not** included in this repo (too large for git — 126MB to 3.4GB each). The following are kept locally and referenced by the scripts below — request access or retrain with `train_TEA.py` / `train_full.py` / `train_no_emotion.py`:
 
 | Checkpoint | Role |
 |---|---|
@@ -77,8 +76,8 @@ Model weights are **not** included in this repo (multi-GB each). The following a
 | `saved_models/AMT_full` | baseline chord model (current architecture, retrained) |
 | `saved_models/AMT_no_emotion` | ablation: no emotion signal at all |
 | `saved_models/TEA_encoder_gru` | best H@1 (single-signal TEA, encoder-only) |
-| `saved_models/MSTEA_encoder_gru_align_l015` | best H@1/AR balance (multi-signal + AlignLoss λ=0.15) |
-| `saved_models/MSTEA_encoder_attention_align` | best AR (attention-based multi-signal + AlignLoss) |
+| `saved_models/MSTEA_encoder_gru_align_l015` | GRU-based multi-signal + AlignLoss (λ=0.15) — within noise of the attention variant below |
+| `saved_models/MSTEA_encoder_attention_align` | best H@1 and best AR among the AlignLoss variants (attention-based multi-signal) |
 
 ## Usage
 
